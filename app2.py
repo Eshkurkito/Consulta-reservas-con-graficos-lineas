@@ -22,7 +22,7 @@ def parse_dates(df: pd.DataFrame) -> pd.DataFrame:
     df["Alojamiento"] = df["Alojamiento"].astype(str).str.strip()
     df["Precio"] = pd.to_numeric(df["Precio"], errors="coerce").fillna(0.0)
     # Detectar columna de portal/canal si existe (case-insensitive)
-    portal_col = next((c for c in df.columns if str(c).strip().lower() in ("portal", "canal")), None)
+    portal_col = next((c for c in df.columns if str(c).strip().lower() in ("portal", "canal", "canal venta", "canal_venta")), None)
     if portal_col is not None:
         df["Portal"] = df[portal_col].astype(str).str.strip()
     return df
@@ -161,20 +161,22 @@ def compute_portal_share(
     period_end: pd.Timestamp,
     filter_props: Optional[List[str]] = None,
 ) -> Optional[pd.DataFrame]:
-    """Distribución por portal (porcentaje de **reservas** que intersectan el periodo a la fecha de corte).
+    """Distribución por portal (porcentaje de reservas que intersectan el periodo a la fecha de corte).
     Devuelve DataFrame con columnas: Portal, Reservas, % Reservas. Si no hay columna 'Portal', retorna None."""
     if "Portal" not in df_all.columns:
         return None
+
     df = df_all[df_all["Fecha alta"] <= cutoff].copy()
     if filter_props:
         df = df[df["Alojamiento"].isin(filter_props)]
-    df = df.dropna(subset=["Fecha entrada", "Fecha salida", "Portal"]) 
+    df = df.dropna(subset=["Fecha entrada", "Fecha salida", "Portal"]).copy()
     if df.empty:
         return pd.DataFrame(columns=["Portal", "Reservas", "% Reservas"]) 
-    # Intersección con el periodo consultado
+
     one_day = np.timedelta64(1, 'D')
     start_ns = np.datetime64(pd.to_datetime(period_start))
     end_excl_ns = np.datetime64(pd.to_datetime(period_end) + pd.Timedelta(days=1))
+
     arr_e = df["Fecha entrada"].values.astype('datetime64[ns]')
     arr_s = df["Fecha salida"].values.astype('datetime64[ns]')
 
@@ -186,7 +188,6 @@ def compute_portal_share(
         return pd.DataFrame(columns=["Portal", "Reservas", "% Reservas"]) 
 
     df_sel = df.loc[mask]
-    # Cada fila se asume una reserva; si hubiera un ID, podríamos contar por ID único
     counts = df_sel.groupby("Portal").size().reset_index(name="Reservas").sort_values("Reservas", ascending=False)
     total = counts["Reservas"].sum()
     counts["% Reservas"] = np.where(total > 0, counts["Reservas"] / total * 100.0, 0.0)
@@ -429,7 +430,7 @@ if mode == "Consulta normal":
     c4.metric("Ingresos (€)", f"{total_n['ingresos']:.2f}")
     c5.metric("ADR (€)", f"{total_n['adr']:.2f}")
     c6.metric("RevPAR (€)", f"{total_n['revpar']:.2f}")
-    # --- Distribución por portal (reservas del periodo)
+    # --- Distribución por portal (reservas del periodo a la fecha de corte)
     port_df = compute_portal_share(
         df_all=raw,
         cutoff=pd.to_datetime(cutoff_normal),
@@ -439,7 +440,7 @@ if mode == "Consulta normal":
     )
     st.subheader("Distribución por portal (reservas en el periodo)")
     if port_df is None:
-        st.info("No se encontró la columna 'Portal' en los archivos (o se llama distinto). Si existe con otro nombre, dímelo y lo mapeo.")
+        st.info("No se encontró la columna 'Portal' (o 'Canal') en los archivos. Si tiene otro nombre, dímelo y lo mapeo.")
     elif port_df.empty:
         st.warning("No hay reservas del periodo a la fecha de corte para calcular distribución por portal.")
     else:
